@@ -30,6 +30,13 @@ type FormState = {
   eps: string
 }
 
+type APIResult = {
+  score: number
+  approved: boolean
+  reasoning: string
+  caseId?: string
+}
+
 const AGENTS = [
   {
     id: 1,
@@ -37,7 +44,7 @@ const AGENTS = [
     name: "Agente Extractor",
     detail: "Extrayendo datos clínicos de la solicitud médica.",
     icon: ScanSearch,
-    duration: 1800,
+    duration: 1500,
   },
   {
     id: 2,
@@ -45,7 +52,7 @@ const AGENTS = [
     name: "Agente Validador",
     detail: "Validando cobertura en el plan de beneficios de la EPS.",
     icon: ShieldCheck,
-    duration: 2000,
+    duration: 1500,
   },
   {
     id: 3,
@@ -53,7 +60,7 @@ const AGENTS = [
     name: "Analista Clínico",
     detail: "Evaluando pertinencia clínica y calculando score.",
     icon: Sparkles,
-    duration: 2400,
+    duration: 1800,
   },
   {
     id: 4,
@@ -61,7 +68,7 @@ const AGENTS = [
     name: "Generador de Respuestas",
     detail: "Creando documento oficial de autorización en PDF.",
     icon: FileText,
-    duration: 1700,
+    duration: 1200,
   },
 ]
 
@@ -77,27 +84,12 @@ const EXAMPLES = [
   {
     patientName: "Andrés Mauricio Peña",
     patientAge: "61",
-    diagnosis: "I25.1 — Enfermedad coronaria aterosclerótica",
-    service: "Cateterismo cardíaco diagnóstico",
+    diagnosis: "I25.1 — Enfermedad coronaria de alto riesgo quirúrgico",
+    service: "Cateterismo cardíaco prioritario urgente",
     doctor: "Dra. Liliana Acosta",
     eps: "Sanitas EPS",
   },
 ]
-
-function computeResult(form: FormState) {
-  // Deterministic-ish pseudo score from inputs for realism
-  const seed =
-    (form.service.length * 7 +
-      form.diagnosis.length * 3 +
-      form.patientName.length) %
-    55
-  const score = 45 + seed // 45..99
-  const approved = score >= 70
-  const reasoning = approved
-    ? `La solicitud de "${form.service}" es coherente con el diagnóstico reportado (${form.diagnosis}). El servicio está incluido en el plan de beneficios de ${form.eps} y cumple los criterios de la guía de práctica clínica. No se identifican banderas rojas ni requisitos pendientes, por lo que la autorización procede de forma automática.`
-    : `La solicitud de "${form.service}" para el diagnóstico ${form.diagnosis} requiere verificación adicional. No se evidencian en la documentación todos los requisitos exigidos por ${form.eps} (concepto de comité o evidencia de manejo previo). Se escala a un auditor médico para revisión antes de emitir la decisión final.`
-  return { score, approved, reasoning }
-}
 
 export function AuthorizationFlow() {
   const [phase, setPhase] = useState<Phase>("form")
@@ -111,7 +103,7 @@ export function AuthorizationFlow() {
   })
   const [activeAgent, setActiveAgent] = useState(0)
   const [completedAgents, setCompletedAgents] = useState<number[]>([])
-  const result = useRef<ReturnType<typeof computeResult> | null>(null)
+  const [apiResult, setApiResult] = useState<APIResult | null>(null)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
 
   const update = (key: keyof FormState, value: string) =>
@@ -120,26 +112,57 @@ export function AuthorizationFlow() {
   const isValid =
     form.patientName && form.patientAge && form.diagnosis && form.service && form.doctor && form.eps
 
-  const runProcessing = () => {
-    result.current = computeResult(form)
+  const runProcessing = async () => {
     setPhase("processing")
     setActiveAgent(0)
     setCompletedAgents([])
 
-    let elapsed = 0
-    AGENTS.forEach((agent, index) => {
-      timers.current.push(
-        setTimeout(() => setActiveAgent(index), elapsed),
-      )
-      elapsed += agent.duration
-      timers.current.push(
-        setTimeout(
-          () => setCompletedAgents((prev) => [...prev, agent.id]),
-          elapsed,
-        ),
-      )
-    })
-    timers.current.push(setTimeout(() => setPhase("result"), elapsed + 400))
+    try {
+      // Disparar la petición real al backend en paralelo con la animación visual de la orquestación
+      const responsePromise = fetch("/api/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      }).then(res => res.json())
+
+      let elapsed = 0
+      
+      // Control secuencial de los estados de los agentes en el pipeline visual
+      AGENTS.forEach((agent, index) => {
+        timers.current.push(
+          setTimeout(() => setActiveAgent(index), elapsed),
+        )
+        elapsed += agent.duration
+        timers.current.push(
+          setTimeout(
+            () => setCompletedAgents((prev) => [...prev, agent.id]),
+            elapsed,
+          ),
+        )
+      })
+
+      // Esperar a que terminen las animaciones visuales y la respuesta de la API
+      const [data] = await Promise.all([
+        responsePromise,
+        new Promise((resolve) => setTimeout(resolve, elapsed + 200))
+      ])
+
+      if (data && data.success) {
+        setApiResult({
+          score: data.score,
+          approved: data.approved,
+          reasoning: data.reasoning,
+          caseId: data.caseId
+        })
+      } else {
+        throw new Error("Fallo en la API del orquestador")
+      }
+
+      setPhase("result")
+    } catch (err) {
+      console.error("Error en la ejecución del flujo:", err)
+      reset()
+    }
   }
 
   useEffect(() => {
@@ -149,7 +172,7 @@ export function AuthorizationFlow() {
   const reset = () => {
     timers.current.forEach(clearTimeout)
     timers.current = []
-    result.current = null
+    setApiResult(null)
     setPhase("form")
     setActiveAgent(0)
     setCompletedAgents([])
@@ -164,9 +187,9 @@ export function AuthorizationFlow() {
     )
   }
 
-  if (phase === "result" && result.current) {
+  if (phase === "result" && apiResult) {
     return (
-      <ResultView form={form} result={result.current} onReset={reset} />
+      <ResultView form={form} result={apiResult} onReset={reset} />
     )
   }
 
@@ -381,7 +404,7 @@ function ResultView({
   onReset,
 }: {
   form: FormState
-  result: { score: number; approved: boolean; reasoning: string }
+  result: APIResult
   onReset: () => void
 }) {
   return (
@@ -393,6 +416,11 @@ function ResultView({
             <StatusBadge
               status={result.approved ? "AUTO_APROBADO" : "REVISION_HUMANA"}
             />
+            {result.caseId && (
+              <span className="mt-2 text-xs font-mono bg-secondary px-2.5 py-1 rounded-md text-muted-foreground">
+                {result.caseId}
+              </span>
+            )}
           </div>
 
           <div className="flex-1">
