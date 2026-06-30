@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { ArrowUpRight, Search, Clock, TrendingUp, CheckCircle2, AlertTriangle } from "lucide-react"
-import { CASES, relativeTime, type CaseStatus } from "@/lib/data"
+import { CASES, relativeTime, type AuthCase, type CaseStatus } from "@/lib/data"
+import { getAllCases } from "@/lib/case-store"
 import { StatusBadge, ScorePill, StageTimeline } from "@/components/case-ui"
 import { cn } from "@/lib/utils"
 
@@ -19,24 +20,26 @@ export function DashboardView() {
   const [now, setNow] = useState(() => Date.now())
   const [filter, setFilter] = useState<FilterKey>("TODOS")
   const [query, setQuery] = useState("")
+  const [cases, setCases] = useState<AuthCase[]>(CASES)
 
   useEffect(() => {
+    setCases(getAllCases())
     const interval = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(interval)
   }, [])
 
   const stats = useMemo(() => {
-    const total = CASES.length
-    const approved = CASES.filter((c) => c.status === "AUTO_APROBADO").length
-    const review = CASES.filter((c) => c.status === "REVISION_HUMANA").length
-    const avg = Math.round(
-      CASES.reduce((a, c) => a + c.pertinenceScore, 0) / total,
-    )
+    const total = cases.length
+    const approved = cases.filter((c) => c.status === "AUTO_APROBADO").length
+    const review = cases.filter((c) => c.status === "REVISION_HUMANA").length
+    const avg = total
+      ? Math.round(cases.reduce((a, c) => a + c.pertinenceScore, 0) / total)
+      : 0
     return { total, approved, review, avg }
-  }, [])
+  }, [cases])
 
   const filtered = useMemo(() => {
-    return CASES.filter((c) => {
+    return cases.filter((c) => {
       const matchesFilter =
         filter === "TODOS" || (c.status as CaseStatus) === filter
       const q = query.trim().toLowerCase()
@@ -48,7 +51,7 @@ export function DashboardView() {
         c.id.toLowerCase().includes(q)
       return matchesFilter && matchesQuery
     })
-  }, [filter, query])
+  }, [cases, filter, query])
 
   const summaryCards = [
     { label: "Casos activos hoy", value: stats.total, icon: Clock, tint: "text-foreground", bg: "bg-secondary" },

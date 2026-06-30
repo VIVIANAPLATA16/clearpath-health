@@ -16,9 +16,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { ScoreGauge } from "@/components/score-gauge"
 import { StatusBadge } from "@/components/case-ui"
-import { OrchestrationPanel } from "@/components/orchestration-panel"
 import { EPS_LIST } from "@/lib/data"
-import { buildCaseFromSubmission, saveLocalCase } from "@/lib/case-store"
 import { cn } from "@/lib/utils"
 
 type Phase = "form" | "processing" | "result"
@@ -37,8 +35,6 @@ type APIResult = {
   approved: boolean
   reasoning: string
   caseId?: string
-  timestamp?: string
-  uipathSync?: { synced: boolean; mode: "live" | "fail-safe"; queueItemId?: number }
 }
 
 const AGENTS = [
@@ -108,40 +104,7 @@ export function AuthorizationFlow() {
   const [activeAgent, setActiveAgent] = useState(0)
   const [completedAgents, setCompletedAgents] = useState<number[]>([])
   const [apiResult, setApiResult] = useState<APIResult | null>(null)
-  const [submitError, setSubmitError] = useState<string | null>(null)
-  const [pdfLoading, setPdfLoading] = useState(false)
-  const [pdfReady, setPdfReady] = useState(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
-
-  const handleDownloadPDF = async () => {
-    if (!apiResult?.caseId) return
-    setPdfLoading(true)
-    try {
-      const response = await fetch("/api/generate-pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ form, result: apiResult }),
-      })
-      if (!response.ok) {
-        throw new Error("No se pudo generar el PDF.")
-      }
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement("a")
-      link.href = url
-      link.download = `authorization-${apiResult.caseId}.pdf`
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
-      setPdfReady(true)
-    } catch (err) {
-      console.error("Error al descargar PDF:", err)
-      setSubmitError("No se pudo generar el PDF. Intente nuevamente.")
-    } finally {
-      setPdfLoading(false)
-    }
-  }
 
   const update = (key: keyof FormState, value: string) =>
     setForm((f) => ({ ...f, [key]: value }))
@@ -153,20 +116,14 @@ export function AuthorizationFlow() {
     setPhase("processing")
     setActiveAgent(0)
     setCompletedAgents([])
-    setSubmitError(null)
 
     try {
+      // Disparar la petición real al backend en paralelo con la animación visual de la orquestación
       const responsePromise = fetch("/api/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
-      }).then(async (res) => {
-        const data = await res.json()
-        if (!res.ok) {
-          throw new Error(data.error ?? "Error al procesar la solicitud.")
-        }
-        return data
-      })
+      }).then(res => res.json())
 
       let elapsed = 0
       
@@ -191,16 +148,12 @@ export function AuthorizationFlow() {
       ])
 
       if (data && data.success) {
-        const result: APIResult = {
+        setApiResult({
           score: data.score,
           approved: data.approved,
           reasoning: data.reasoning,
-          caseId: data.caseId,
-          timestamp: data.timestamp,
-          uipathSync: data.uipathSync,
-        }
-        setApiResult(result)
-        saveLocalCase(buildCaseFromSubmission(form, data))
+          caseId: data.caseId
+        })
       } else {
         throw new Error("Fallo en la API del orquestador")
       }
@@ -208,7 +161,6 @@ export function AuthorizationFlow() {
       setPhase("result")
     } catch (err) {
       console.error("Error en la ejecución del flujo:", err)
-      setSubmitError(err instanceof Error ? err.message : "Error al procesar la solicitud.")
       reset()
     }
   }
@@ -221,7 +173,6 @@ export function AuthorizationFlow() {
     timers.current.forEach(clearTimeout)
     timers.current = []
     setApiResult(null)
-    setPdfReady(false)
     setPhase("form")
     setActiveAgent(0)
     setCompletedAgents([])
@@ -238,14 +189,7 @@ export function AuthorizationFlow() {
 
   if (phase === "result" && apiResult) {
     return (
-      <ResultView
-        form={form}
-        result={apiResult}
-        onReset={reset}
-        onDownloadPDF={handleDownloadPDF}
-        pdfLoading={pdfLoading}
-        pdfReady={pdfReady}
-      />
+      <ResultView form={form} result={apiResult} onReset={reset} />
     )
   }
 
@@ -257,11 +201,6 @@ export function AuthorizationFlow() {
       }}
       className="cp-fade-up rounded-3xl border border-border bg-card p-6 shadow-sm sm:p-8"
     >
-      {submitError && (
-        <div className="mb-5 rounded-xl border border-destructive/30 bg-destructive/8 px-4 py-3 text-sm text-destructive">
-          {submitError}
-        </div>
-      )}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium text-muted-foreground">
           Datos de la solicitud
@@ -463,19 +402,11 @@ function ResultView({
   form,
   result,
   onReset,
-  onDownloadPDF,
-  pdfLoading,
-  pdfReady,
 }: {
   form: FormState
   result: APIResult
   onReset: () => void
-  onDownloadPDF: () => void
-  pdfLoading: boolean
-  pdfReady: boolean
 }) {
-  const dashboardHref = result.caseId ? `/dashboard?highlight=${result.caseId}` : "/dashboard"
-
   return (
     <div className="cp-scale-in space-y-6">
       <div className="rounded-3xl border border-border bg-card p-6 shadow-sm sm:p-10">
@@ -494,7 +425,7 @@ function ResultView({
 
           <div className="flex-1">
             <p className="text-sm font-semibold uppercase tracking-wider text-accent">
-              Dictamen clínico
+              Resultado del análisis
             </p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
               {result.approved
@@ -502,42 +433,36 @@ function ResultView({
                 : "Escalado a revisión humana"}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              {form.patientName} · {form.service} · {form.eps}
+              {form.service} · {form.eps}
             </p>
 
-            <div className="mt-5 rounded-2xl border border-accent/15 bg-accent/5 p-5">
+            <div className="mt-5 rounded-2xl bg-secondary/60 p-5">
               <p className="flex items-center gap-2 text-sm font-medium text-foreground">
                 <Sparkles className="h-4 w-4 text-accent" />
-                Parecer del analista clínico · Gemini 2.5 Flash
+                Razonamiento clínico de Gemini 2.5
               </p>
-              <p className="mt-3 text-sm leading-relaxed text-foreground/85">
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                 {result.reasoning}
               </p>
             </div>
 
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
               {result.approved ? (
                 <Button
-                  onClick={onDownloadPDF}
-                  disabled={pdfLoading}
                   size="lg"
                   className="h-11 rounded-full bg-accent px-6 text-accent-foreground hover:bg-accent/90"
                 >
-                  {pdfLoading ? (
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="mr-1 h-4 w-4" />
-                  )}
-                  {pdfLoading ? "Generando PDF..." : pdfReady ? "Descargar PDF nuevamente" : "Descargar autorización (PDF)"}
+                  <Download className="mr-1 h-4 w-4" />
+                  Descargar autorización (PDF)
                 </Button>
               ) : (
                 <Button
-                  render={<Link href={dashboardHref} />}
+                  render={<Link href="/dashboard" />}
                   nativeButton={false}
                   size="lg"
                   className="h-11 rounded-full bg-primary px-6 text-primary-foreground hover:bg-primary/90"
                 >
-                  Ir al panel del auditor
+                  Enviar al auditor médico
                   <ArrowRight className="ml-1 h-4 w-4" />
                 </Button>
               )}
@@ -548,23 +473,12 @@ function ResultView({
                 className="h-11 rounded-full px-6"
               >
                 <RotateCcw className="mr-1 h-4 w-4" />
-                Procesar otra solicitud
+                Procesar otra
               </Button>
             </div>
           </div>
         </div>
       </div>
-
-      {result.caseId && (
-        <OrchestrationPanel
-          caseId={result.caseId}
-          approved={result.approved}
-          eps={form.eps}
-          uipathSynced={result.uipathSync?.synced ?? false}
-          pdfReady={pdfReady}
-          dashboardHref={dashboardHref}
-        />
-      )}
     </div>
   )
 }

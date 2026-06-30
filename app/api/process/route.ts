@@ -1,46 +1,81 @@
 import { NextResponse } from "next/server"
+import { getUiPathToken } from "@/lib/uipath"
+import { addToUiPathQueue } from "@/lib/uipath-queue"
+import {
+  computeAuthorizationScore,
+  validateAuthorizationInput,
+  type AuthorizationInput,
+} from "@/lib/scoring-engine"
 
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { patientName, patientAge, diagnosis, service, eps } = body
+    const input: AuthorizationInput = {
+      patientName: body.patientName ?? "",
+      patientAge: body.patientAge ?? "",
+      diagnosis: body.diagnosis ?? "",
+      service: body.service ?? "",
+      doctor: body.doctor ?? "",
+      eps: body.eps ?? "",
+    }
 
-    // Simular latencia de procesamiento de red (Orquestación de UiPath Maestro)
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    const validationError = validateAuthorizationInput(input)
+    if (validationError) {
+      return NextResponse.json(
+        { success: false, error: validationError.message, field: validationError.field },
+        { status: 400 },
+      )
+    }
 
-    // Lógica de Negocio Avanzada: Análisis de Pertinencia Clínica (Mocking Gemini 2.5 Flash)
-    let baseScore = 65
-    
-    // Penalizar o bonificar según criterios del sistema de salud colombiano
-    const textToAnalyze = `${diagnosis} ${service}`.toLowerCase()
-    
-    if (textToAnalyze.includes("urgente") || textToAnalyze.includes("prioritario")) baseScore += 15
-    if (textToAnalyze.includes("terapia") || textToAnalyze.includes("ambulatorio")) baseScore += 10
-    if (textToAnalyze.includes("no pos") || textToAnalyze.includes("comité")) baseScore -= 20
-    if (parseInt(patientAge) > 60) baseScore += 5 // Prioridad adulto mayor
+    const { score, approved, reasoning, caseId } = computeAuthorizationScore(input)
 
-    // Limitar score entre 40 y 100
-    const score = Math.max(40, Math.min(100, baseScore))
-    const approved = score >= 70
+    let uipathSync: {
+      synced: boolean
+      mode: "live" | "fail-safe"
+      queueItemId?: number
+    } = { synced: false, mode: "fail-safe" }
 
-    // Generación de justificación estructurada
-    const reasoning = approved
-      ? `[UiPath Maestro - AutoApproved] La solicitud de "${service}" coincide plenamente con los protocolos clínicos para el diagnóstico "${diagnosis}". Se valida cobertura activa en ${eps}. El agente inteligente determinó un índice de pertinencia del ${score}%, cumpliendo con la meta de oportunidad médica y mitigando el riesgo de tutelas contra el asegurador.`
-      : `[UiPath Maestro - Escalated] La solicitud de "${service}" presenta inconsistencias normativas o requiere validación de junta médica para el diagnóstico "${diagnosis}". Se detectaron criterios de exclusión o falta de soportes obligatorios exigidos por ${eps}. El caso ha sido pausado en UiPath Action Center y escalado al Dashboard de Auditoría Humana.`
+    console.log("[API Process] Intentando autenticación con UiPath Cloud...")
+    const uiPathToken = await getUiPathToken()
+
+    if (uiPathToken) {
+      console.log("[API Process] ✅ Autenticación exitosa con UiPath. Token generado.")
+      try {
+        const queueResult = await addToUiPathQueue(uiPathToken, {
+          caseId,
+          patientName: input.patientName,
+          diagnosis: input.diagnosis,
+          service: input.service,
+          score,
+          approved,
+        })
+        console.log("[API Process] ✅ QueueItem creado en Orchestrator:", queueResult)
+        uipathSync = {
+          synced: true,
+          mode: "live",
+          queueItemId: (queueResult as { Id?: number }).Id,
+        }
+      } catch (queueError) {
+        console.error("[API Process] ⚠️ Fail-Safe: no se pudo crear QueueItem:", queueError)
+      }
+    } else {
+      console.warn("[API Process] ⚠️ No se pudo obtener el token de UiPath. Usando modo de respaldo local.")
+    }
 
     return NextResponse.json({
       success: true,
-      caseId: `UPM-${Math.floor(100000 + Math.random() * 900000)}`,
+      caseId,
       score,
       approved,
       reasoning,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      uipathSync,
     })
-
   } catch (error) {
+    console.error("[API Process Exception]:", error)
     return NextResponse.json(
-      { success: false, error: "Error interno procesando el payload del caso" },
-      { status: 500 }
+      { success: false, error: "Internal Server Error" },
+      { status: 500 },
     )
   }
 }
