@@ -48,6 +48,10 @@ ClearPath Health leverages the **UiPath Automation Cloud** ecosystem as the core
 * **UiPath Document Understanding (IDP):** Digitizes, structure-parses, and extracts clinical metadata from physical or digital medical orders/prescriptions submitted by clinics.
 * **Human-In-The-Loop (UiPath Action Center):** Implements strict business governance. If a case falls under exception rules, Maestro pauses execution and routes it to a human medical auditor via an interactive panel, ensuring safety and compliance.
 
+## 🧠 Agent Type Declaration
+
+This solution uses **Coded Agents**. The four clinical agents (Clinical Data Reader, Coverage Verifier, Clinical Analyst, Response Generator) are implemented as TypeScript functions orchestrated via UiPath Orchestrator Queues using OAuth2 Client Credentials, NOT built with the low-code Agent Builder visual canvas. The orchestration logic, queue dispatch, and decision routing are coded directly in `lib/scoring-engine.ts`, `lib/uipath.ts`, and `lib/uipath-queue.ts`. UiPath serves as the execution and governance layer (Orchestrator Queues, Folder-based access control) while the agent reasoning itself is coded, not low-code.
+
 ### 🔌 Real Integration Layer (Code Map)
 
 | File | Responsibility |
