@@ -6,6 +6,8 @@
 > **Application Language:** Spanish (Targeting the Colombian Healthcare System)  
 > **Documentation Language:** English (For Judging Evaluation)
 
+🌐 **Live demo:** https://clearpath-health-orpin.vercel.app
+
 ---
 
 ## ✅ Live UiPath Integration Verified
@@ -294,6 +296,8 @@ To verify the substantial and meaningful integration of coding agents in this so
 ---
 
 ## 📦 Local Setup & Installation Guide
+
+Puedes probar la app en vivo aquí: https://clearpath-health-orpin.vercel.app, o seguir los pasos abajo para correrla localmente.
 
 Follow these steps to run the interactive Next.js 16 web application locally.
 
