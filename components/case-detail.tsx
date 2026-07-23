@@ -20,6 +20,36 @@ import { cn } from "@/lib/utils"
 export function CaseDetailActions({ caseData }: { caseData: AuthCase }) {
   const [decision, setDecision] = useState<"none" | "approved" | "info">("none")
 
+  // Solo casos en revisión humana requieren acción del auditor.
+  // AUTO_APROBADO ya fue resuelto por el motor de pertinencia.
+  if (caseData.status === "AUTO_APROBADO") {
+    return (
+      <div className="flex items-start gap-3 rounded-2xl border border-success/30 bg-success/8 p-4">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-success text-success-foreground">
+          <Check className="h-5 w-5" strokeWidth={3} />
+        </span>
+        <div>
+          <p className="font-medium text-foreground">
+            Ya fue auto-aprobado por el sistema
+          </p>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            No se requiere decisión del auditor. La autorización fue emitida
+            automáticamente por el motor de pertinencia clínica.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (caseData.status === "EN_PROCESO") {
+    return (
+      <div className="rounded-2xl border border-border bg-secondary/50 p-4 text-sm text-muted-foreground">
+        El caso aún está en proceso. La decisión del auditor estará disponible
+        cuando el análisis finalice.
+      </div>
+    )
+  }
+
   if (decision === "approved") {
     return (
       <div className="cp-scale-in flex items-center gap-3 rounded-2xl border border-success/30 bg-success/8 p-4">
@@ -78,10 +108,12 @@ export function CaseDetailActions({ caseData }: { caseData: AuthCase }) {
 }
 
 export function CaseDetailContent({ caseData }: { caseData: AuthCase }) {
+  const needsAuditor = caseData.status === "REVISION_HUMANA"
+
   return (
-    <div className="grid gap-6 lg:grid-cols-3">
+    <div className="grid gap-6 lg:grid-cols-3 lg:items-start">
       {/* main column */}
-      <div className="space-y-6 lg:col-span-2">
+      <div className="min-w-0 space-y-6 lg:col-span-2">
         {/* patient + doctor */}
         <div className="rounded-2xl border border-border bg-card p-6">
           <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
@@ -110,8 +142,11 @@ export function CaseDetailContent({ caseData }: { caseData: AuthCase }) {
           </div>
         </div>
 
-        {/* reasoning */}
-        <div className="rounded-2xl border border-border bg-card p-6">
+        {/* reasoning — scroll-mt evita que el nav sticky tape el título */}
+        <div
+          id="razonamiento-clinico"
+          className="scroll-mt-24 rounded-2xl border border-border bg-card p-6"
+        >
           <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             <Sparkles className="h-4 w-4 text-accent" />
             Razonamiento clínico — Gemini 2.5 Flash
@@ -120,6 +155,20 @@ export function CaseDetailContent({ caseData }: { caseData: AuthCase }) {
             {caseData.reasoning}
           </p>
         </div>
+
+        {/* Decisión del auditor: solo REVISION_HUMANA, en flujo normal (no sticky/fixed) */}
+        {needsAuditor && (
+          <div className="relative z-0 rounded-2xl border border-warning/25 bg-warning/5 p-6">
+            <p className="mb-1 text-sm font-semibold uppercase tracking-wider text-warning">
+              Decisión del auditor
+            </p>
+            <p className="mb-4 text-sm text-muted-foreground">
+              Este caso fue escalado a revisión humana. Elija una acción para
+              continuar el flujo de autorización.
+            </p>
+            <CaseDetailActions caseData={caseData} />
+          </div>
+        )}
 
         {/* risk + checklist */}
         <div className="grid gap-6 sm:grid-cols-2">
@@ -201,8 +250,8 @@ export function CaseDetailContent({ caseData }: { caseData: AuthCase }) {
         </div>
       </div>
 
-      {/* sidebar */}
-      <div className="space-y-6">
+      {/* sidebar — flujo normal, sin sticky/fixed para no solaparse con el nav */}
+      <aside className="relative z-0 space-y-6 lg:col-span-1">
         <div className="rounded-2xl border border-border bg-card p-6 text-center">
           <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             Score de pertinencia
@@ -214,9 +263,9 @@ export function CaseDetailContent({ caseData }: { caseData: AuthCase }) {
             <StatusBadge status={caseData.status} />
           </div>
           <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-            {caseData.pertinenceScore >= 70
-              ? "Score superior a 70: la solicitud cumple los criterios de aprobación automática."
-              : "Score inferior a 70: la solicitud requiere la decisión de un auditor médico."}
+            {caseData.pertinenceScore >= 80
+              ? "Score ≥ 80: la solicitud cumple los criterios de aprobación automática."
+              : "Score < 80: la solicitud requiere la decisión de un auditor médico."}
           </p>
         </div>
 
@@ -229,13 +278,22 @@ export function CaseDetailContent({ caseData }: { caseData: AuthCase }) {
           </div>
         </div>
 
+        {/* Estado de resolución en sidebar (sin botones de acción duplicados) */}
         <div className="rounded-2xl border border-border bg-card p-6">
           <p className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            Decisión del auditor
+            Estado de resolución
           </p>
-          <CaseDetailActions caseData={caseData} />
+          {needsAuditor ? (
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              Pendiente de dictamen. Use el panel{" "}
+              <span className="font-medium text-foreground">Decisión del auditor</span>{" "}
+              en la columna principal para aprobar o solicitar más información.
+            </p>
+          ) : (
+            <CaseDetailActions caseData={caseData} />
+          )}
         </div>
-      </div>
+      </aside>
     </div>
   )
 }

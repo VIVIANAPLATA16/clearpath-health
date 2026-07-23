@@ -27,7 +27,7 @@ export async function getUiPathToken(): Promise<string | null> {
       grant_type: "client_credentials",
       client_id: clientId,
       client_secret: clientSecret,
-      scope: "OR.Queues OR.Queues.Read OR.Assets OR.Assets.Read OR.Execution OR.Jobs",
+      scope: "OR.Queues OR.Queues.Read OR.Execution OR.Jobs",
     };
 
     const formBody = Object.keys(details)
